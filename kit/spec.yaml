@@ -24,7 +24,9 @@ agentInstructions:
     chisel), Slither, Aderyn, Echidna and crytic-compile. Run `<tool> --version` for exact versions.
     - Node: in a directory with .nvmrc or .node-version, bash switches to that version automatically.
       Use npm, or bun in projects with bun.lock. Don't install pnpm or yarn unless the project needs them.
-    - Python: use uv (`uv run`, `uv add`, `uv tool install`), not bare pip.
+    - Python: use uv (`uv run`, `uv add`, `uv tool install`), not bare pip. UV_PROJECT_ENVIRONMENT puts
+      the venv at `~/.venvs/<repo folder>` on the sandbox, outside the repo, so the host's Mac `.venv`
+      is left alone. Don't create or touch `.venv` in the sandbox.
     - Solidity: there is no foundryup. Tool versions are managed by the kit; don't reinstall them.
 
 permissions:
@@ -193,6 +195,11 @@ setup:
         # >>> dev kit. This file is sourced before every command, so it stays quiet.
         export PATH="$HOME/.local/bin:$HOME/.foundry/bin:$HOME/.bun/bin:$PATH"
         export BUN_INSTALL="$HOME/.bun" FNM_DIR="$HOME/.local/share/fnm"
+        # The repo is shared with a macOS host, so the sandbox's Linux venv can't live in .venv.
+        # Keep it on the microVM instead, named after the repo folder.
+        _r=$(git rev-parse --show-toplevel 2>/dev/null) || _r=$PWD
+        export UV_PROJECT_ENVIRONMENT="$HOME/.venvs/${_r##*/}"
+        unset _r
         # Agents run each command in a fresh non-interactive shell, where fnm's --use-on-cd never
         # fires, so switch to the project's Node version here and on every cd.
         if command -v fnm >/dev/null; then

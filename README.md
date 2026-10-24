@@ -4,7 +4,7 @@ A [Docker Sandboxes (`sbx`)](https://docs.docker.com/ai/sandboxes/) kit that ins
 
 | Tool | Notes |
 |---|---|
-| [uv](https://docs.astral.sh/uv/) | Python and tools |
+| [uv](https://docs.astral.sh/uv/) | Python and tools. In the sandbox each project's venv lives in `~/.venvs/`, outside the repo, so the Linux venv never clobbers your Mac `.venv` |
 | [fnm](https://github.com/Schniz/fnm) + Node.js | Node LTS by default. Bash switches to a project's `.nvmrc` / `.node-version` automatically |
 | [Bun](https://bun.sh) | |
 | [Foundry](https://getfoundry.sh) | forge, cast, anvil, chisel |
