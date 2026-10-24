@@ -1,0 +1,222 @@
+schemaVersion: "2"
+kind: mixin
+name: dev
+displayName: Dev toolchain
+description: uv, fnm + Node, Bun, Foundry, Slither, Aderyn and Echidna, at their latest stable releases.
+
+# Every tool installs its latest stable release when the sandbox is created (or upgraded with
+# `sbx kit add`). To pin one, pass e.g. --kit-arg dev.foundry_version=1.8.6
+args:
+  uv_version:      { default: latest, pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+)$' }
+  fnm_version:     { default: latest, pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+)$' }
+  node_version:    { default: lts, description: "Default Node.js: lts, a major (24) or an exact version (24.11.0)" }
+  bun_version:     { default: latest, pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+)$' }
+  foundry_version: { default: latest, pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+)$' }
+  slither_version: { default: latest, pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+)$' }
+  aderyn_version:  { default: latest, pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+)$' }
+  echidna_version: { default: latest, pattern: '^(latest|[0-9]+\.[0-9]+\.[0-9]+)$' }
+  update_agent:    { default: "true", enum: ["true", "false"], description: "Update the agent CLI (claude, codex) to its latest release" }
+
+agentInstructions:
+  content: |
+    ## Dev toolchain
+    Installed by the sandbox kit: uv, fnm with a default Node.js, bun, Foundry (forge, cast, anvil,
+    chisel), Slither, Aderyn, Echidna and crytic-compile. Run `<tool> --version` for exact versions.
+    - Node: in a directory with .nvmrc or .node-version, bash switches to that version automatically.
+      Use npm, or bun in projects with bun.lock. Don't install pnpm or yarn unless the project needs them.
+    - Python: use uv (`uv run`, `uv add`, `uv tool install`), not bare pip.
+    - Solidity: there is no foundryup. Tool versions are managed by the kit; don't reinstall them.
+
+permissions:
+  network:
+    allow:
+      # Installs: GitHub releases, PyPI, Node
+      - github.com
+      - objects.githubusercontent.com
+      - release-assets.githubusercontent.com
+      - pypi.org
+      - files.pythonhosted.org
+      - nodejs.org
+      # Package registries
+      - registry.npmjs.org
+      - jsr.io
+      - npm.jsr.io
+      - bun.sh
+      - bun.com
+      # solc downloads, Soldeer registry
+      - binaries.soliditylang.org
+      - soldeer.xyz
+      - api.soldeer.xyz
+      # Docs
+      - docs.soliditylang.org
+      - docs.openzeppelin.com
+      - eips.ethereum.org
+      - ethereum.org
+      - www.evm.codes
+      - getfoundry.sh
+      - book.getfoundry.sh
+      - secure-contracts.com
+      - docs.astral.sh
+      - developer.mozilla.org
+      - www.typescriptlang.org
+      - viem.sh
+      # Verified source and signature lookups (forks, cast source, cast 4byte)
+      - api.etherscan.io
+      - etherscan.io
+      - '*.etherscan.io'
+      - '*.blockscout.com'
+      - sourcify.dev
+      - '*.sourcify.dev'
+      - api.openchain.xyz
+      # RPCs for forks. Low risk: the sandbox holds no signing keys.
+      - '*.g.alchemy.com'
+      - '*.infura.io'
+      - '*.publicnode.com'
+      - '*.drpc.org'
+
+setup:
+  install:
+    # Shared helpers for the steps below. Each step is its own `sh -c`, so they source this.
+    - description: Write install helpers
+      command: |
+        set -eu
+        cat > /usr/local/lib/sbx-dev-kit.sh <<'EOF'
+        set -eu
+        fetch() { curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors "$@"; }
+        # latest <owner/repo> <tag prefix>: the newest stable release's tag, minus the prefix.
+        # Follows the releases/latest redirect, so there's no GitHub API rate limit.
+        latest() {
+          url=$(fetch -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest")
+          tag=${url##*/tag/}
+          case $tag in "$2"[0-9]*) echo "${tag#"$2"}" ;; *) echo "no release found for $1 ($url)" >&2; return 1 ;; esac
+        }
+        # resolve <requested> <owner/repo> <tag prefix>
+        resolve() { if [ "$1" = latest ]; then latest "$2" "$3"; else echo "$1"; fi; }
+        case $(dpkg --print-architecture) in
+          amd64) ARCH=amd64 TRIPLE=x86_64 ;;
+          arm64) ARCH=arm64 TRIPLE=aarch64 ;;
+          *) echo "unsupported architecture" >&2; exit 1 ;;
+        esac
+        mkdir -p "$HOME/.local/bin"
+        EOF
+
+    - description: Install uv
+      user: "1000"
+      command: |
+        . /usr/local/lib/sbx-dev-kit.sh
+        v=$(resolve "${{ kit.args.uv_version }}" astral-sh/uv "")
+        fetch "https://github.com/astral-sh/uv/releases/download/$v/uv-$TRIPLE-unknown-linux-gnu.tar.gz" |
+          tar -xz --strip-components=1 -C ~/.local/bin
+        ~/.local/bin/uv --version
+
+    - description: Install fnm and Node.js
+      user: "1000"
+      command: |
+        . /usr/local/lib/sbx-dev-kit.sh
+        v=$(resolve "${{ kit.args.fnm_version }}" Schniz/fnm v)
+        case $ARCH in amd64) zip=fnm-linux.zip ;; arm64) zip=fnm-arm64.zip ;; esac
+        fetch -o /tmp/fnm.zip "https://github.com/Schniz/fnm/releases/download/v$v/$zip"
+        unzip -o -q /tmp/fnm.zip -d ~/.local/bin && chmod +x ~/.local/bin/fnm && rm /tmp/fnm.zip
+        export FNM_DIR=~/.local/share/fnm
+        node="${{ kit.args.node_version }}"
+        if [ "$node" = lts ]; then ~/.local/bin/fnm install --lts; node=lts-latest; else ~/.local/bin/fnm install "$node"; fi
+        ~/.local/bin/fnm default "$node"
+        # For shells that don't source /etc/sandbox-persistent.sh (sh, scripts): the default version.
+        for t in node npm npx corepack; do ln -sfn "$FNM_DIR/aliases/default/bin/$t" ~/.local/bin/$t; done
+        ~/.local/bin/fnm --version && ~/.local/bin/node --version
+
+    - description: Install Bun
+      user: "1000"
+      command: |
+        . /usr/local/lib/sbx-dev-kit.sh
+        v=$(resolve "${{ kit.args.bun_version }}" oven-sh/bun bun-v)
+        case $ARCH in amd64) pkg=bun-linux-x64 ;; arm64) pkg=bun-linux-aarch64 ;; esac
+        mkdir -p ~/.bun/bin
+        fetch -o /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v$v/$pkg.zip"
+        unzip -o -q -j /tmp/bun.zip "$pkg/bun" -d ~/.bun/bin && rm /tmp/bun.zip
+        ln -sfn bun ~/.bun/bin/bunx
+        for t in bun bunx; do ln -sfn ~/.bun/bin/$t ~/.local/bin/$t; done
+        ~/.local/bin/bun --version
+
+    - description: Install Foundry
+      user: "1000"
+      command: |
+        . /usr/local/lib/sbx-dev-kit.sh
+        v=$(resolve "${{ kit.args.foundry_version }}" foundry-rs/foundry v)
+        mkdir -p ~/.foundry/bin
+        fetch "https://github.com/foundry-rs/foundry/releases/download/v$v/foundry_v${v}_linux_$ARCH.tar.gz" |
+          tar -xz -C ~/.foundry/bin
+        for t in forge cast anvil chisel; do ln -sfn ~/.foundry/bin/$t ~/.local/bin/$t; done
+        ~/.local/bin/forge --version | head -1
+
+    - description: Install Slither and crytic-compile
+      user: "1000"
+      command: |
+        . /usr/local/lib/sbx-dev-kit.sh
+        v="${{ kit.args.slither_version }}"
+        [ "$v" = latest ] && spec=slither-analyzer || spec="slither-analyzer==$v"
+        # crytic-compile and solc-select come with Slither; expose them too, since Echidna calls crytic-compile.
+        ~/.local/bin/uv tool install --force --upgrade "$spec" --with-executables-from crytic-compile,solc-select
+        ~/.local/bin/slither --version
+
+    - description: Install Aderyn
+      user: "1000"
+      command: |
+        . /usr/local/lib/sbx-dev-kit.sh
+        v=$(resolve "${{ kit.args.aderyn_version }}" Cyfrin/aderyn aderyn-v)
+        name=aderyn-$TRIPLE-unknown-linux-gnu tmp=$(mktemp -d)
+        fetch -o "$tmp/aderyn.tar.xz" "https://github.com/Cyfrin/aderyn/releases/download/aderyn-v$v/$name.tar.xz"
+        # Not tar -J: some base images have no xz. Python's tarfile reads .xz on its own.
+        python3 -c 'import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2], filter="data")' "$tmp/aderyn.tar.xz" "$tmp"
+        install -m 0755 "$tmp/$name/aderyn" ~/.local/bin/aderyn
+        rm -r "$tmp"
+        ~/.local/bin/aderyn --version
+
+    - description: Install Echidna
+      user: "1000"
+      command: |
+        . /usr/local/lib/sbx-dev-kit.sh
+        v=$(resolve "${{ kit.args.echidna_version }}" crytic/echidna v)
+        fetch "https://github.com/crytic/echidna/releases/download/v$v/echidna-$v-$TRIPLE-linux.tar.gz" |
+          tar -xz -C ~/.local/bin echidna
+        ~/.local/bin/echidna --version
+
+    - description: Put the toolchain on PATH and activate fnm in every bash shell
+      user: "1000"
+      command: |
+        set -eu
+        f=/etc/sandbox-persistent.sh
+        # Replace our block in place. The file is agent-owned but /etc isn't, so no sed -i.
+        rest=$(sed '/^# >>> dev kit/,/^# <<< dev kit/d' "$f")
+        printf '%s\n' "$rest" > "$f"
+        cat >> "$f" <<'EOF'
+        # >>> dev kit. This file is sourced before every command, so it stays quiet.
+        export PATH="$HOME/.local/bin:$HOME/.foundry/bin:$HOME/.bun/bin:$PATH"
+        export BUN_INSTALL="$HOME/.bun" FNM_DIR="$HOME/.local/share/fnm"
+        # Agents run each command in a fresh non-interactive shell, where fnm's --use-on-cd never
+        # fires, so switch to the project's Node version here and on every cd.
+        if command -v fnm >/dev/null; then
+          eval "$(fnm env --shell bash --version-file-strategy recursive --log-level quiet)"
+          fnm use --silent-if-unchanged --install-if-missing >/dev/null 2>&1 || true
+          cd() { builtin cd "$@" || return; fnm use --silent-if-unchanged --install-if-missing >/dev/null 2>&1 || true; }
+        fi
+        # <<< dev kit
+        EOF
+        bash -c 'for t in uv fnm node bun forge slither aderyn echidna; do printf "%-8s %s\n" "$t" "$($t --version 2>&1 | head -1)"; done'
+
+    # The built-in agent images trail the agents' releases (Codex by weeks). This runs at create and
+    # upgrade, before the agent starts. A failed update leaves the image's version and doesn't fail.
+    - description: Update the agent CLI to its latest release
+      user: "1000"
+      command: |
+        [ "${{ kit.args.update_agent }}" = true ] || exit 0
+        export PATH="$HOME/.local/bin:$PATH"
+        cd /tmp
+        if [ -d /usr/local/share/npm-global/lib/node_modules/@openai/codex ]; then
+          npm install -g --prefix /usr/local/share/npm-global --no-fund --no-audit --loglevel=error @openai/codex@latest &&
+            codex --version || echo "warning: couldn't update codex" >&2
+        fi
+        if command -v claude >/dev/null; then
+          claude update || echo "warning: couldn't update claude" >&2
+        fi
+        exit 0

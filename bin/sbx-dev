@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Run an agent in a Docker Sandbox for the current repo, with the dev kit.
+#
+#   sbx-dev <agent> [sbx run args]   create this repo's sandbox on first run, attach after that
+#   sbx-dev upgrade <agent>          reinstall the toolchain and agent CLI at their latest releases
+#   sbx-dev rm <agent>               remove this repo's sandbox
+#
+# <agent> is claude, codex, opencode or any other sbx agent. Run it from anywhere in a repo: the
+# sandbox mounts the repo root, with .git read-only. One sandbox per repo and agent, named
+# <agent>-<repo>. Extra args go to `sbx run`: sbx-dev claude -e ETH_RPC_URL -- --continue
+set -euo pipefail
+
+KIT=$(cd "$(dirname "$(realpath "$0")")/../kit" && pwd)
+
+die() { echo "sbx-dev: $*" >&2; exit 1; }
+usage() { sed -n '2,10p' "$(realpath "$0")" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+cmd=run
+case ${1:-} in
+  ""|-h|--help) usage ;;
+  upgrade|rm) cmd=$1; shift; [ $# -eq 1 ] || usage ;;
+esac
+agent=$1; shift
+
+command -v sbx >/dev/null || die "sbx isn't installed. Run install.sh in the sbx-dev-kit repo"
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
+[ "$root" != "$HOME" ] && [ "$root" != / ] || die "run this from a project folder, not $root"
+name=$agent-$(basename "$root" | tr -c 'A-Za-z0-9.\n-' '-' | sed 's/^[^A-Za-z0-9]*//')
+
+# The folder the sandbox named $1 mounts, or empty if there's no such sandbox.
+workspace_of() { sbx ls --json | jq -r --arg n "$1" '(. // [])[] | select(.name == $n) | .workspaces[0] // "none"'; }
+workspace=$(workspace_of "$name")
+if [ -n "$workspace" ] && [ "$workspace" != "$root" ]; then
+  # Another repo with the same folder name has it. Tell them apart by path.
+  name=$name-$(printf %s "$root" | shasum | cut -c1-6)
+  workspace=$(workspace_of "$name")
+fi
+
+case $cmd in
+  rm)
+    [ -n "$workspace" ] || die "no sandbox $name"
+    exec sbx rm "$name" ;;
+  upgrade)
+    [ -n "$workspace" ] || die "no sandbox $name. Start one with: sbx-dev $agent"
+    exec sbx kit add "$name" "$KIT" ;;
+esac
+
+if [ -z "$workspace" ]; then
+  # Prefer Docker's own agent kit, which tracks the agent's releases. sbx refuses one whose name
+  # matches a built-in agent, so use the built-in until sbx drops it.
+  ref=$agent
+  case $agent in
+    claude|codex)
+      sbx create --help | sed -n 's/^ *Available agents: //p' | tr -s ', ' '\n' | grep -qx "$agent" ||
+        ref=docker.io/sbx/$agent-kit:latest ;;
+  esac
+  mounts=("$root")
+  [ -e "$root/.git" ] && mounts+=("$root/.git:ro")
+  echo "sbx-dev: creating $name (installing the toolchain takes a few minutes, once)" >&2
+  sbx create --name "$name" --kit "$KIT" "$ref" "${mounts[@]}"
+fi
+exec sbx run --name "$name" "$@"
