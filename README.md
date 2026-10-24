@@ -131,6 +131,10 @@ sbx policy allow network <host>      # allow it everywhere
 
 Or add the host to the kit and run `sbx-dev upgrade`.
 
+## Browsers
+
+No browser is preinstalled. The kit allows the hosts for Playwright's Chromium and the Ubuntu packages it needs, and its agent instructions give the install recipe, so the agent can set one up when a task calls for it (Playwright's build is the one that exists for arm64). The recipe also trusts the sandbox proxy's CA in Chromium's certificate store. Allowed sites load without it, but with it a blocked host shows the proxy's 403 explanation instead of a bare certificate error.
+
 ## Hygiene
 
 - The sandbox can read everything in the repo folder, including untracked `.env` files. Keep private keys out of them.

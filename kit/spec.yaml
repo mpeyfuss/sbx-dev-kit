@@ -28,6 +28,19 @@ agentInstructions:
       the venv at `~/.venvs/<repo folder>` on the sandbox, outside the repo, so the host's Mac `.venv`
       is left alone. Don't create or touch `.venv` in the sandbox.
     - Solidity: there is no foundryup. Tool versions are managed by the kit; don't reinstall them.
+    - Browser: none is preinstalled. If a task needs one, install Playwright's Chromium (it has an arm64 build; Puppeteer's
+      Chrome for Testing doesn't, and Ubuntu's chromium package is a snap stub). There is no display, so run it headless.
+      Once per sandbox:
+        npm i -D playwright                                          # or in a scratch dir outside the repo
+        sudo env "PATH=$PATH" npx playwright install-deps chromium   # apt libraries, needs root
+        npx playwright install chromium
+        sudo apt-get install -y libnss3-tools
+        mkdir -p ~/.pki/nssdb && certutil -d sql:$HOME/.pki/nssdb -N --empty-password
+        for c in /usr/local/share/ca-certificates/*.crt; do certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "$(basename "$c")" -i "$c"; done
+      The last three lines (the CA import) are optional. Allowed hosts load without them. Pages go through the sandbox network
+      policy like everything else; for a blocked host the proxy answers with its own certificate. Without the import Chromium
+      only reports net::ERR_CERT_AUTHORITY_INVALID, with it you get the 403 page saying which host needs approval.
+      Localhost dev servers work.
 
 permissions:
   network:
@@ -39,6 +52,12 @@ permissions:
       - pypi.org
       - files.pythonhosted.org
       - nodejs.org
+      # Playwright's Chromium, and the Ubuntu packages it needs, when the agent installs a browser
+      - cdn.playwright.dev
+      - playwright.download.prss.microsoft.com
+      - archive.ubuntu.com
+      - security.ubuntu.com
+      - ports.ubuntu.com
       # Package registries
       - registry.npmjs.org
       - jsr.io
