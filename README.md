@@ -58,6 +58,22 @@ sbx ls                   # list all sandboxes
 
 To pull changes to the kit itself, run `git pull` in `~/sbx-dev-kit`. New sandboxes pick them up, and `sbx-dev upgrade` applies them to existing ones.
 
+### Terminal tab titles
+
+The kit defaults Codex's terminal title to the app name and thread title. Existing
+`tui.terminal_title` preferences are preserved; run `/title` inside Codex to change them.
+Use `/rename` to give a conversation a recognizable name in Codex or Claude.
+Claude manages its own terminal title format.
+
+In VS Code, allow applications to set the terminal tab title in your user settings:
+
+```json
+"terminal.integrated.tabs.title": "${sequence}"
+```
+
+Remove any manually assigned terminal tab name so the application title can appear.
+For an existing Codex sandbox, run `sbx-dev upgrade codex` to apply the default.
+
 ## Staying current
 
 | What | How it stays current |

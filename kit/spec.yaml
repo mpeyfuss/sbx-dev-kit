@@ -204,6 +204,37 @@ setup:
         EOF
         bash -c 'for t in uv fnm node bun forge slither aderyn echidna; do printf "%-8s %s\n" "$t" "$($t --version 2>&1 | head -1)"; done'
 
+    - description: Default Codex terminal titles to app and thread
+      user: "1000"
+      command: |
+        set -eu
+        python3 - <<'PY'
+        import os
+        import re
+        import tomllib
+        from pathlib import Path
+
+        if not Path('/usr/local/share/npm-global/lib/node_modules/@openai/codex').is_dir():
+            raise SystemExit(0)
+        config = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
+        text = config.read_text() if config.exists() else ''
+        data = tomllib.loads(text)
+        if 'terminal_title' in data.get('tui', {}):
+            raise SystemExit(0)  # Keep choices made with /title, including an empty list.
+        setting = 'terminal_title = ["app-name", "thread-title"]\n'
+        section = re.search(r'''(?m)^\s*\[\s*(?:tui|"tui"|'tui')\s*\][^\S\n]*(?:#[^\n]*)?$''', text)
+        if section:
+            text = text[:section.end()] + '\n' + setting + text[section.end():]
+        elif 'tui' not in data:
+            text = text.rstrip() + '\n\n[tui]\n' + setting
+        else:
+            print('warning: inline or dotted tui config; use /title to configure terminal titles')
+            raise SystemExit(0)
+        tomllib.loads(text)  # Validate before writing any existing configuration.
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(text)
+        PY
+
     # The built-in agent images trail the agents' releases (Codex by weeks). This runs at create and
     # upgrade, before the agent starts. A failed update leaves the image's version and doesn't fail.
     - description: Update the agent CLI to its latest release
